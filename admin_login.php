@@ -19,29 +19,56 @@ if (str_starts_with($next, '//') || !preg_match('#^/?[A-Za-z0-9_\-/.]+\.php(\?[^
     $next = 'homeadmin.php';
 }
 
-$hash = get_setting($conn, 'admin_password_hash', '');
-$first_time = ($hash === '');
+if (!empty($_SESSION['is_admin']) && !empty($_SESSION['admin_id'])) {
+    header('Location: ' . $next);
+    exit;
+}
+
+if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(32));
+$csrf = $_SESSION['csrf'];
+
+// ยังไม่มีบัญชี Admin เลย -> ให้สร้างบัญชีแรก
+$first_time = admin_count($conn) === 0;
 $error = '';
+$username = '';
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    $pw = $_POST['password'] ?? '';
-    if ($first_time) {
-        if (strlen($pw) < 6) $error = 'รหัสผ่านต้องยาวอย่างน้อย 6 ตัวอักษร';
+    $username = trim($_POST['username'] ?? '');
+    $pw = (string)($_POST['password'] ?? '');
+
+    if (!hash_equals($csrf, (string)($_POST['csrf'] ?? ''))) {
+        $error = 'คำขอไม่ถูกต้อง กรุณาลองใหม่';
+    } elseif ($first_time) {
+        if ($username === '' || mb_strlen($username) > 50) $error = 'กรุณาระบุ username (ไม่เกิน 50 ตัวอักษร)';
+        elseif (mb_strlen($pw) < 6) $error = 'รหัสผ่านต้องยาวอย่างน้อย 6 ตัวอักษร';
         elseif ($pw !== ($_POST['password2'] ?? '')) $error = 'รหัสผ่านทั้งสองช่องไม่ตรงกัน';
-        else {
-            set_setting($conn, 'admin_password_hash', password_hash($pw, PASSWORD_DEFAULT));
-            $hash = get_setting($conn, 'admin_password_hash');
+        elseif (admin_count($conn) === 0) {
+            $hash = password_hash($pw, PASSWORD_DEFAULT);
+            $stmt = $conn->prepare("INSERT INTO sport_admins (username, password_hash) VALUES (?, ?)");
+            $stmt->bind_param("ss", $username, $hash);
+            $stmt->execute();
+            $stmt->close();
         }
     }
+
     if (!$error) {
-        if (password_verify($pw, $hash)) {
+        $stmt = $conn->prepare("SELECT id, username, password_hash FROM sport_admins WHERE username = ? LIMIT 1");
+        $stmt->bind_param("s", $username);
+        $stmt->execute();
+        $admin = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
+
+        if ($admin && password_verify($pw, $admin['password_hash'])) {
             session_regenerate_id(true);
             $_SESSION['is_admin'] = true;
+            $_SESSION['admin_id'] = (int)$admin['id'];
+            $_SESSION['admin_username'] = $admin['username'];
             header('Location: ' . $next);
             exit;
         }
         sleep(1);
-        $error = 'รหัสผ่านไม่ถูกต้อง';
+        $error = 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง';
+        $first_time = admin_count($conn) === 0;
     }
 }
 ?>
@@ -57,16 +84,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <div class="card" style="width: 100%; max-width: 400px;">
         <div class="header-gradient">
             <div style="font-size: 40px; margin-bottom: 8px;">🔐</div>
-            <h1 style="font-size: 22px; font-weight: 700;"><?= $first_time ? 'ตั้งรหัสผ่าน Admin ครั้งแรก' : 'เข้าสู่ระบบ Admin' ?></h1>
+            <h1 style="font-size: 22px; font-weight: 700;"><?= $first_time ? 'สร้างบัญชี Admin แรก' : 'เข้าสู่ระบบ Admin' ?></h1>
         </div>
         <div class="p-6">
             <?php if ($error): ?>
             <div class="notice mb-4" style="background:#fef2f2; color:#dc2626;">❌ <?= htmlspecialchars($error) ?></div>
             <?php endif; ?>
-            <form method="post">
+            <form method="post" autocomplete="off">
+                <input type="hidden" name="csrf" value="<?= htmlspecialchars($csrf) ?>">
+                <div class="mb-4">
+                    <label class="form-label">Username</label>
+                    <input type="text" name="username" value="<?= htmlspecialchars($username) ?>" required maxlength="50" autofocus class="form-input">
+                </div>
                 <div class="mb-4">
                     <label class="form-label">รหัสผ่าน</label>
-                    <input type="password" name="password" required autofocus class="form-input">
+                    <input type="password" name="password" required class="form-input">
                 </div>
                 <?php if ($first_time): ?>
                 <div class="mb-4">
@@ -74,7 +106,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     <input type="password" name="password2" required class="form-input">
                 </div>
                 <?php endif; ?>
-                <button type="submit" class="btn btn-primary" style="width: 100%;"><?= $first_time ? '💾 ตั้งรหัสผ่านและเข้าสู่ระบบ' : '➡️ เข้าสู่ระบบ' ?></button>
+                <button type="submit" class="btn btn-primary" style="width: 100%;"><?= $first_time ? '💾 สร้างบัญชีและเข้าสู่ระบบ' : '➡️ เข้าสู่ระบบ' ?></button>
             </form>
             <div class="text-center mt-4"><a href="home.php" class="btn-back">🏠 กลับหน้าหลัก</a></div>
         </div>

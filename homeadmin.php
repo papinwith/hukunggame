@@ -22,6 +22,7 @@ $event_name = get_setting($conn, 'event_name');
             </div>
             <h1 class="text-3xl font-bold mb-2">Admin Panel</h1>
             <p class="text-gray text-lg">ระบบจัดการ<?= htmlspecialchars($event_name) ?></p>
+            <p class="text-sm text-gray mt-4">สวัสดี, <?= htmlspecialchars($_SESSION['admin_username'] ?? '') ?></p>
         </div>
         
         <!-- Menu Grid -->
@@ -78,6 +79,50 @@ $event_name = get_setting($conn, 'event_name');
                     <div>
                         <h2 class="font-bold" style="color: #1f2937; font-size: 18px;">ตารางการแข่งขัน</h2>
                         <p class="text-gray text-sm">จัดการตารางแข่ง</p>
+                    </div>
+                </div>
+            </a>
+
+            <!-- Scan / Search Card -->
+            <a href="search.php" class="card" style="text-decoration: none;">
+                <div class="card-body flex items-center gap-4">
+                    <div style="width: 56px; height: 56px; border-radius: 16px; background: linear-gradient(135deg, #e9d5ff, #d8b4fe); display: flex; align-items: center; justify-content: center; font-size: 24px;">📇</div>
+                    <div>
+                        <h2 class="font-bold" style="color: #1f2937; font-size: 18px;">สแกน/ค้นหาบัตร</h2>
+                        <p class="text-gray text-sm">สแกน QR รับเสื้อ ดูประวัติ</p>
+                    </div>
+                </div>
+            </a>
+
+            <!-- Check-in Today -->
+            <a href="checkin_today.php" class="card" style="text-decoration: none;">
+                <div class="card-body flex items-center gap-4">
+                    <div style="width: 56px; height: 56px; border-radius: 16px; background: linear-gradient(135deg, #d1fae5, #6ee7b7); display: flex; align-items: center; justify-content: center; font-size: 24px;">✅</div>
+                    <div>
+                        <h2 class="font-bold" style="color: #1f2937; font-size: 18px;">เช็คชื่อวันนี้</h2>
+                        <p class="text-gray text-sm">เช็คชื่อเฉพาะรายการที่แข่งวันนี้</p>
+                    </div>
+                </div>
+            </a>
+
+            <!-- Admin Accounts -->
+            <a href="admin_accounts.php" class="card" style="text-decoration: none;">
+                <div class="card-body flex items-center gap-4">
+                    <div style="width: 56px; height: 56px; border-radius: 16px; background: linear-gradient(135deg, #ede9fe, #ddd6fe); display: flex; align-items: center; justify-content: center; font-size: 24px;">👤</div>
+                    <div>
+                        <h2 class="font-bold" style="color: #1f2937; font-size: 18px;">บัญชี Admin</h2>
+                        <p class="text-gray text-sm">เพิ่ม ลบ เปลี่ยนรหัสผ่าน Admin</p>
+                    </div>
+                </div>
+            </a>
+
+            <!-- Manual -->
+            <a href="manual.html" class="card" style="text-decoration: none;">
+                <div class="card-body flex items-center gap-4">
+                    <div style="width: 56px; height: 56px; border-radius: 16px; background: linear-gradient(135deg, #f3f4f6, #d1d5db); display: flex; align-items: center; justify-content: center; font-size: 24px;">📖</div>
+                    <div>
+                        <h2 class="font-bold" style="color: #1f2937; font-size: 18px;">คู่มือการใช้งาน</h2>
+                        <p class="text-gray text-sm">คู่มือสำหรับผู้ดูแลและผู้พัฒนา</p>
                     </div>
                 </div>
             </a>

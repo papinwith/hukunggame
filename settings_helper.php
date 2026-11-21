@@ -15,6 +15,8 @@ function setting_defaults() {
         'current_year'           => '2026',
         'event_dates'            => 'วันที่ 13 – 28 มีนาคม 2568',
         'card_footer'            => 'บัตรนักกีฬาใช้แสดงตัวในวันแข่งขัน',
+        // URL ของ Google Apps Script (Web app) สำหรับปุ่ม Sync Google Sheets ในหน้ารายชื่อ (ว่าง = ปิดปุ่ม)
+        'gsheet_url'             => 'https://script.google.com/macros/s/AKfycbycq2EUNGnghdp67Z1GUqisHt9FjRV4pf9R9S3quqt3HyKwgMa1wNfoQxephXmh7W3_pQ/exec',
     ];
 }
 
@@ -47,11 +49,79 @@ function ensure_schema(mysqli $conn) {
     }
 
     // รูปต่อ (นักศึกษา, กีฬา, ประเภทรูป) ต้องมีแค่ 1 แถว ไม่งั้นรายชื่อ/บัตรจะขึ้นซ้ำ
-    $r = $conn->query("SHOW INDEX FROM image WHERE Key_name='uniq_image'");
-    if ($r && $r->num_rows == 0) {
+    // (ฐานข้อมูลจากระบบ sport เดิมใช้ชื่อ index uniq_student_sport_type ซึ่งทำหน้าที่เดียวกัน)
+    if (!index_exists($conn, 'image', 'uniq_image') && !index_exists($conn, 'image', 'uniq_student_sport_type')) {
         $conn->query("DELETE i1 FROM image i1 JOIN image i2
             ON i1.student_id=i2.student_id AND i1.sport_id=i2.sport_id AND i1.image_type=i2.image_type AND i1.image_id < i2.image_id");
         $conn->query("ALTER TABLE image ADD UNIQUE KEY uniq_image (student_id, sport_id, image_type)");
+    }
+
+    // สถานะรับเสื้อ / เช็คชื่อเข้าแข่ง (ใช้ในหน้า search.php และ checkin_today.php)
+    $status_cols = [
+        'shirt_received'    => 'TINYINT(1) DEFAULT 0',
+        'shirt_received_at' => 'DATETIME DEFAULT NULL',
+        'attendance'        => 'TINYINT(1) DEFAULT 0',
+        'attendance_at'     => 'DATETIME DEFAULT NULL',
+    ];
+    foreach ($status_cols as $col => $def) {
+        $r = $conn->query("SHOW COLUMNS FROM sport_registration LIKE '$col'");
+        if ($r && $r->num_rows == 0) {
+            $conn->query("ALTER TABLE sport_registration ADD COLUMN $col $def");
+        }
+    }
+
+    // นักศึกษา 1 คน สมัครกีฬาเดิมได้ครั้งเดียว: ล้างแถวซ้ำ (รวมสถานะไว้ที่แถวแรก) แล้วเพิ่ม unique key
+    if (!index_exists($conn, 'sport_registration', 'uniq_student_sport')) {
+        $conn->query("UPDATE sport_registration sr
+            JOIN (
+                SELECT MIN(reg_id) AS keep_id,
+                       MAX(shirt_received) AS shirt_received, MAX(shirt_received_at) AS shirt_received_at,
+                       MAX(attendance) AS attendance, MAX(attendance_at) AS attendance_at
+                FROM sport_registration GROUP BY student_id, sport_id
+            ) dup ON sr.reg_id = dup.keep_id
+            SET sr.shirt_received = dup.shirt_received,
+                sr.shirt_received_at = COALESCE(dup.shirt_received_at, sr.shirt_received_at),
+                sr.attendance = dup.attendance,
+                sr.attendance_at = COALESCE(dup.attendance_at, sr.attendance_at)");
+        $conn->query("DELETE sr_old FROM sport_registration sr_old
+            JOIN sport_registration sr_keep
+              ON sr_old.student_id = sr_keep.student_id AND sr_old.sport_id = sr_keep.sport_id AND sr_old.reg_id > sr_keep.reg_id");
+        $conn->query("ALTER TABLE sport_registration ADD UNIQUE KEY uniq_student_sport (student_id, sport_id)");
+    }
+
+    // ประวัติเช็คชื่อเข้าแข่งรายวัน
+    $conn->query("CREATE TABLE IF NOT EXISTS sport_attendance (
+        attendance_id INT(11) NOT NULL AUTO_INCREMENT,
+        reg_id INT(11) NOT NULL,
+        match_id INT(11) DEFAULT NULL,
+        attendance_date DATE NOT NULL,
+        checked_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (attendance_id),
+        UNIQUE KEY uniq_reg_date (reg_id, attendance_date),
+        KEY idx_match_id (match_id),
+        CONSTRAINT sport_attendance_ibfk_1 FOREIGN KEY (reg_id) REFERENCES sport_registration (reg_id) ON DELETE CASCADE,
+        CONSTRAINT sport_attendance_ibfk_2 FOREIGN KEY (match_id) REFERENCES match_schedule (match_id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
+
+    // บัญชี Admin (หลายบัญชี) — ใช้ตารางเดียวกับระบบ sport เดิม
+    $conn->query("CREATE TABLE IF NOT EXISTS sport_admins (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        username VARCHAR(50) NOT NULL UNIQUE,
+        password_hash VARCHAR(255) NOT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci");
+
+    // ย้ายรหัสผ่าน Admin แบบเดิม (รหัสเดียวใน settings) มาเป็นบัญชี "Admin" ถ้ายังไม่มีบัญชีใดเลย
+    $r = $conn->query("SELECT COUNT(*) c FROM sport_admins");
+    if ($r && (int)$r->fetch_assoc()['c'] === 0) {
+        $r = $conn->query("SELECT setting_value FROM settings WHERE setting_key='admin_password_hash'");
+        $legacy = $r ? $r->fetch_assoc() : null;
+        if ($legacy && $legacy['setting_value'] !== '') {
+            $stmt = $conn->prepare("INSERT INTO sport_admins (username, password_hash) VALUES ('Admin', ?)");
+            $stmt->bind_param("s", $legacy['setting_value']);
+            $stmt->execute();
+            $stmt->close();
+        }
     }
 
     foreach (setting_defaults() as $k => $v) {
@@ -60,6 +130,18 @@ function ensure_schema(mysqli $conn) {
         $stmt->execute();
         $stmt->close();
     }
+}
+
+function index_exists(mysqli $conn, $table, $index) {
+    $index = $conn->real_escape_string($index);
+    $r = $conn->query("SHOW INDEX FROM `$table` WHERE Key_name='$index'");
+    return $r instanceof mysqli_result && $r->num_rows > 0;
+}
+
+/* จำนวนบัญชี Admin ทั้งหมด (0 = ยังไม่เคยตั้งค่า ต้องสร้างบัญชีแรก) */
+function admin_count(mysqli $conn) {
+    $r = $conn->query("SELECT COUNT(*) c FROM sport_admins");
+    return $r ? (int)$r->fetch_assoc()['c'] : 0;
 }
 
 function get_setting(mysqli $conn, $key, $default = '') {

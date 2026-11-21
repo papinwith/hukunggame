@@ -468,7 +468,8 @@
         if (page === 'home.php' || page === 'index.php' || page === 'player_card.php') return;
 
         var adminPages = ['homeadmin.php', 'admin_dashboard.php', 'admin_schedule.php', 'admin_settings.php', 'allstudent.php', 'allstudent2.php',
-                          'edit_registration.php', 'sport_admin.php', 'sport_admin2.php', 'sport_edit.php'];
+                          'edit_registration.php', 'sport_admin.php', 'sport_admin2.php', 'sport_edit.php',
+                          'search.php', 'checkin_today.php', 'admin_accounts.php'];
         var isAdmin = adminPages.indexOf(page) !== -1;
         var homeUrl = isAdmin ? 'homeadmin.php' : 'home.php';
 

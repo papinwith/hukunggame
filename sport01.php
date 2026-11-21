@@ -113,7 +113,17 @@ if($_SERVER['REQUEST_METHOD']=="POST"){
             $reg = mysqli_prepare($conn,"INSERT INTO sport_registration (student_id,student_name,faculty_id,color_id,sport_id,sport_name,category,reg_year) VALUES (?,?,?,?,?,?,?,?)");
             $reg_year = (int)get_setting($conn,'current_year');
             mysqli_stmt_bind_param($reg,"ssiiissi",$student_id,$name,$faculty,$color,$sport_id,$sport_name,$category,$reg_year);
-            mysqli_stmt_execute($reg);
+            try {
+                $reg_ok = mysqli_stmt_execute($reg);
+            } catch (mysqli_sql_exception $e) {
+                $reg_ok = false;
+            }
+            if (!$reg_ok) {
+                // 1062 = สมัครซ้ำ (กดส่งพร้อมกัน 2 ครั้ง ชน unique key student_id+sport_id)
+                $msg = (mysqli_errno($conn) === 1062) ? "❌ สมัครกีฬานี้ไปแล้ว" : "❌ บันทึกข้อมูลไม่สำเร็จ กรุณาลองใหม่อีกครั้ง";
+                mysqli_stmt_close($reg);
+                goto end_post;
+            }
             $new_reg_id = mysqli_insert_id($conn);
             mysqli_stmt_close($reg);
 

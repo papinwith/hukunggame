@@ -28,15 +28,30 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         set_setting($conn, 'event_name', trim($_POST['event_name'] ?? '') ?: 'หูกวางเกมส์');
         set_setting($conn, 'event_dates', trim($_POST['event_dates'] ?? ''));
         set_setting($conn, 'card_footer', trim($_POST['card_footer'] ?? ''));
-        $flash = 'บันทึกการตั้งค่าเรียบร้อย';
+        $gsheet = trim($_POST['gsheet_url'] ?? '');
+        if ($gsheet === '' || preg_match('#^https://script\.google\.com/#', $gsheet)) set_setting($conn, 'gsheet_url', $gsheet);
+        else { $flash_ok = false; }
+        $flash = $flash_ok ? 'บันทึกการตั้งค่าเรียบร้อย' : 'บันทึกแล้ว ยกเว้น URL Google Sheets (ต้องขึ้นต้นด้วย https://script.google.com/)';
     }
 
     elseif ($action === 'change_password') {
         $old = $_POST['old_password'] ?? ''; $new = $_POST['new_password'] ?? '';
-        if (!password_verify($old, get_setting($conn, 'admin_password_hash', ''))) { $flash = 'รหัสผ่านเดิมไม่ถูกต้อง'; $flash_ok = false; }
+        $stmt = $conn->prepare("SELECT password_hash FROM sport_admins WHERE id=?");
+        $stmt->bind_param("i", $_SESSION['admin_id']);
+        $stmt->execute();
+        $cur_hash = $stmt->get_result()->fetch_assoc()['password_hash'] ?? '';
+        $stmt->close();
+        if (!password_verify($old, $cur_hash)) { $flash = 'รหัสผ่านเดิมไม่ถูกต้อง'; $flash_ok = false; }
         elseif (strlen($new) < 6) { $flash = 'รหัสผ่านใหม่ต้องยาวอย่างน้อย 6 ตัวอักษร'; $flash_ok = false; }
         elseif ($new !== ($_POST['new_password2'] ?? '')) { $flash = 'รหัสผ่านใหม่ทั้งสองช่องไม่ตรงกัน'; $flash_ok = false; }
-        else { set_setting($conn, 'admin_password_hash', password_hash($new, PASSWORD_DEFAULT)); $flash = 'เปลี่ยนรหัสผ่านเรียบร้อย'; }
+        else {
+            $new_hash = password_hash($new, PASSWORD_DEFAULT);
+            $stmt = $conn->prepare("UPDATE sport_admins SET password_hash=? WHERE id=?");
+            $stmt->bind_param("si", $new_hash, $_SESSION['admin_id']);
+            $stmt->execute();
+            $stmt->close();
+            $flash = 'เปลี่ยนรหัสผ่านเรียบร้อย';
+        }
     }
 
     elseif ($action === 'add_color') {
@@ -163,9 +178,14 @@ $close_local = $s['registration_close'] ? date('Y-m-d\TH:i', strtotime($s['regis
                     <label class="form-label">นามสกุลไฟล์รูปที่อนุญาต (คั่นด้วยจุลภาค)</label>
                     <input type="text" name="allowed_image_ext" value="<?= htmlspecialchars($s['allowed_image_ext']) ?>" class="form-input">
                 </div>
-                <div class="mb-6">
+                <div class="mb-4">
                     <label class="form-label">ข้อความท้ายบัตรนักกีฬา</label>
                     <input type="text" name="card_footer" value="<?= htmlspecialchars($s['card_footer']) ?>" class="form-input">
+                </div>
+                <div class="mb-6">
+                    <label class="form-label">URL Google Apps Script สำหรับ Sync Google Sheets (เว้นว่าง = ปิดปุ่ม Sync)</label>
+                    <input type="url" name="gsheet_url" value="<?= htmlspecialchars($s['gsheet_url']) ?>" placeholder="https://script.google.com/macros/s/.../exec" class="form-input">
+                    <p class="text-gray text-sm" style="margin-top:4px;">วิธีสร้าง Script ดูได้ในคู่มือ (manual.html) หน้า 7</p>
                 </div>
                 <button type="submit" class="btn btn-primary" style="width: 100%;">💾 บันทึกการตั้งค่า</button>
             </form>
@@ -174,7 +194,7 @@ $close_local = $s['registration_close'] ? date('Y-m-d\TH:i', strtotime($s['regis
 
     <!-- Admin password -->
     <div class="card mb-8">
-        <div class="header-gradient"><h2 style="font-size: 18px; font-weight: 700;">🔐 เปลี่ยนรหัสผ่าน Admin</h2></div>
+        <div class="header-gradient"><h2 style="font-size: 18px; font-weight: 700;">🔐 เปลี่ยนรหัสผ่านของฉัน (<?= htmlspecialchars($_SESSION['admin_username'] ?? '') ?>)</h2></div>
         <div class="p-6">
             <form method="post">
                 <?= csrf_field() ?>
@@ -193,6 +213,7 @@ $close_local = $s['registration_close'] ? date('Y-m-d\TH:i', strtotime($s['regis
                 </div>
                 <button type="submit" class="btn btn-primary" style="width: 100%;">🔑 เปลี่ยนรหัสผ่าน</button>
             </form>
+            <p class="text-center text-sm mt-4"><a href="admin_accounts.php" style="color:#6366f1;">👤 จัดการบัญชี Admin อื่น ๆ</a></p>
         </div>
     </div>
 

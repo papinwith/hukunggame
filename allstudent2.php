@@ -74,6 +74,56 @@ if($category && $download=='csv'){
     exit;
 }
 
+/* SYNC TO GOOGLE SHEETS (POST เท่านั้น, URL ตั้งได้ที่หน้า admin_settings.php) */
+$gsheet_url = get_setting($conn, 'gsheet_url');
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'sync_gsheet' && $category) {
+    if ($gsheet_url === '' || !preg_match('#^https://script\.google\.com/#', $gsheet_url)) {
+        header("Location: $back_url&sync_result=nourl");
+        exit;
+    }
+    $stmt=$conn->prepare("SELECT sr.student_id,sr.student_name,s.tel,f.faculty_name,c.color_name,sr.sport_name,sr.category,ps.shirt_size FROM sport_registration sr JOIN student s ON sr.student_id=s.student_id JOIN faculty f ON sr.faculty_id=f.faculty_id JOIN color_team c ON sr.color_id=c.color_id LEFT JOIN player_size ps ON sr.student_id=ps.student_id AND sr.sport_id=ps.sport_id WHERE sr.color_id=? AND sr.sport_name=? AND sr.category=?");
+    $stmt->bind_param("iss",$color_id,$sport_name,$category);
+    $stmt->execute();
+    $res=$stmt->get_result();
+    $rows = [];
+    while($r=$res->fetch_assoc()){
+        $rows[] = [
+            'id' => $r['student_id'], 'name' => $r['student_name'], 'tel' => $r['tel'],
+            'faculty' => $r['faculty_name'], 'color' => $r['color_name'], 'sport' => $r['sport_name'],
+            'category' => $r['category'], 'size' => $r['shirt_size'] ?? '-',
+        ];
+    }
+    if (empty($rows)) {
+        header("Location: $back_url&sync_result=empty");
+        exit;
+    }
+
+    // ส่งข้อมูลทั้งหมดในคำขอเดียว (Batch Sync)
+    $ch = curl_init($gsheet_url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode(['data' => $rows]));
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+    curl_setopt($ch, CURLOPT_TIMEOUT, 30);
+    $response = curl_exec($ch);
+    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $curl_err = curl_error($ch);
+    curl_close($ch);
+
+    if ($http_code == 200) {
+        header("Location: $back_url&sync_result=success&sync_count=" . count($rows));
+        exit;
+    }
+    echo "<div style='font-family: sans-serif; padding: 20px; border: 1px solid #ff4444; background: #fff5f5; border-radius: 8px;'>";
+    echo "<h2 style='color: #cc0000;'>Sync Failed (HTTP " . (int)$http_code . ")</h2>";
+    echo "<p><b>สาเหตุที่พบบ่อย:</b> Google Script ไม่ได้ตั้งสิทธิ์การเข้าถึงเป็น \"ทุกคน (Anyone)\" หรือ URL ไม่ถูกต้อง</p>";
+    echo "<div style='background: #eee; padding: 10px; border-radius: 4px; overflow: auto; max-height: 300px;'>";
+    echo "<b>Response:</b><br><pre>" . htmlspecialchars($curl_err ?: (string)$response) . "</pre>";
+    echo "</div><br><a href='" . htmlspecialchars($back_url) . "' style='display: inline-block; padding: 10px 20px; background: #6366f1; color: white; text-decoration: none; border-radius: 6px;'>← กลับ</a>";
+    echo "</div>";
+    exit;
+}
+
 $colorNames = [];
 $colorBg = [];
 $cn = $conn->query("SELECT color_id, color_name FROM color_team");
@@ -137,7 +187,24 @@ while($row = $cn->fetch_assoc()){
         <div class="text-center mb-6">
             <a href="?color_id=<?= $color_id ?>&sport_name=<?= urlencode($sport_name) ?>&category=<?= urlencode($category) ?>&download=csv" class="btn btn-success" style="padding: 12px 24px; font-size: 14px;">⬇️ ดาวน์โหลด CSV</a>
             <a href="player_card.php?color_id=<?= $color_id ?>&sport_name=<?= urlencode($sport_name) ?>&category=<?= urlencode($category) ?>" target="_blank" class="btn btn-primary" style="padding: 12px 24px; font-size: 14px;">🪪 พิมพ์บัตรนักกีฬาทั้งหมด</a>
+            <?php if ($gsheet_url !== ''): ?>
+            <form method="post" style="display:inline;" onsubmit="return confirm('ส่งข้อมูลรายชื่อนี้ไปยัง Google Sheets?')">
+                <?= csrf_field() ?>
+                <input type="hidden" name="action" value="sync_gsheet">
+                <button type="submit" class="btn" style="padding: 12px 24px; font-size: 14px; background: #4285F4; color: white; border: none; cursor: pointer;">📊 Sync Google Sheets</button>
+            </form>
+            <?php endif; ?>
         </div>
+
+        <?php $sync_result = $_GET['sync_result'] ?? ''; if ($sync_result !== ''): ?>
+        <?php if ($sync_result === 'success'): ?>
+        <div class="notice" style="background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; margin-bottom: 20px; text-align: center;">✅ ส่งข้อมูล <?= (int)($_GET['sync_count'] ?? 0) ?> รายการไป Google Sheets เรียบร้อยแล้ว!</div>
+        <?php elseif ($sync_result === 'empty'): ?>
+        <div class="notice" style="margin-bottom: 20px; text-align: center;">ℹ️ ไม่มีรายชื่อให้ส่ง</div>
+        <?php else: ?>
+        <div class="notice" style="background:#fef2f2; color:#dc2626; margin-bottom: 20px; text-align: center;">❌ ยังไม่ได้ตั้งค่า URL Google Sheets (ไปที่ ตั้งค่าระบบ)</div>
+        <?php endif; ?>
+        <?php endif; ?>
         
         <div class="text-center mb-4">
             <span style="display: inline-block; background: #eef2ff; color: #6366f1; padding: 8px 20px; border-radius: 50px; font-weight: 700; font-size: 14px;">ประเภท: <?= htmlspecialchars($category) ?></span>
@@ -192,6 +259,7 @@ while($row = $cn->fetch_assoc()){
                         </td>
                         <td style="text-align: center;">
                             <a href="player_card.php?reg_id=<?= $r['reg_id'] ?>" target="_blank" style="text-decoration:none; font-size:1.2em; margin-right:5px;" title="พิมพ์บัตรนักกีฬา">🪪</a>
+                            <a href="search.php?student_id=<?= urlencode($r['student_id']) ?>" target="_blank" style="text-decoration:none; font-size:1.2em; margin-right:5px;" title="สแกน/รับเสื้อ/เช็คชื่อ">📇</a>
                             <button onclick='openEditModal(<?= htmlspecialchars(json_encode($r), ENT_QUOTES, "UTF-8") ?>)' class="btn-icon" style="background:none; border:none; cursor:pointer; font-size:1.2em; margin-right:5px;" title="แก้ไข">✏️</button>
                             <form method="post" style="display:inline;" onsubmit="return confirm('ยืนยันการลบ? รูปและไซส์เสื้อของรายการนี้จะถูกลบด้วย')">
                                 <?= csrf_field() ?>

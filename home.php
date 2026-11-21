@@ -76,6 +76,7 @@
             <div class="flex justify-center gap-4" style="flex-wrap: wrap;">
                 <a href="sport.php" class="btn btn-primary">📝 สมัครการแข่งขัน/Register</a>
                 <a href="list.php" class="btn btn-success">📅 ตารางการแข่งขัน/Match Schedule</a>
+                <a href="student_card.php" class="btn btn-success">📇 ค้นหาบัตรนักกีฬา/Athlete Card</a>
             </div>
         </div>
         
