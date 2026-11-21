@@ -15,8 +15,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         set_setting($conn, 'max_sports_per_student', (string)$max);
         set_setting($conn, 'registration_open', isset($_POST['registration_open']) ? '1' : '0');
 
-        $close = trim($_POST['registration_close'] ?? '');
-        if ($close !== '') set_setting($conn, 'registration_close', str_replace('T', ' ', $close) . (strlen($close) == 16 ? ':00' : ''));
+        $start = read_datetime24('registration_start');
+        $close = read_datetime24('registration_close');
+        if ($start === null || $close === null) {
+            $flash_ok = false;
+            $time_error = 'วันที่หรือเวลาไม่ถูกต้อง (ใช้เวลาแบบ 24 ชั่วโมง 00:00 – 23:59)';
+        } elseif ($start !== '' && $close !== '' && strtotime($start) >= strtotime($close)) {
+            $flash_ok = false;
+            $time_error = 'เวลาเปิด (' . date('d/m/Y H:i', strtotime($start)) . ') ต้องมาก่อนเวลาปิด (' . date('d/m/Y H:i', strtotime($close)) . ')'
+                . (strtotime($close) < time() ? ' — เวลาปิดที่ตั้งไว้ผ่านไปแล้ว กรุณาเลื่อนเวลาปิดด้วย' : '');
+        } else {
+            set_setting($conn, 'registration_start', $start);
+            if ($close !== '') set_setting($conn, 'registration_close', $close);
+        }
+        set_setting($conn, 'admin_session_timeout', (string)min(1440, max(5, (int)($_POST['admin_session_timeout'] ?? 30))));
 
         $sizes = array_filter(array_map('trim', explode(',', $_POST['shirt_sizes'] ?? '')), fn($x) => $x !== '');
         if ($sizes) set_setting($conn, 'shirt_sizes', implode(',', array_unique($sizes)));
@@ -31,7 +43,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $gsheet = trim($_POST['gsheet_url'] ?? '');
         if ($gsheet === '' || preg_match('#^https://script\.google\.com/#', $gsheet)) set_setting($conn, 'gsheet_url', $gsheet);
         else { $flash_ok = false; }
-        $flash = $flash_ok ? 'บันทึกการตั้งค่าเรียบร้อย' : 'บันทึกแล้ว ยกเว้น URL Google Sheets (ต้องขึ้นต้นด้วย https://script.google.com/)';
+        if ($flash_ok) $flash = 'บันทึกการตั้งค่าเรียบร้อย';
+        elseif (!empty($time_error)) $flash = 'บันทึกแล้ว ยกเว้นเวลารับสมัคร: ' . $time_error;
+        else $flash = 'บันทึกแล้ว ยกเว้น URL Google Sheets (ต้องขึ้นต้นด้วย https://script.google.com/)';
     }
 
     elseif ($action === 'change_password') {
@@ -113,7 +127,9 @@ $faculties = $conn->query("SELECT f.*, c.color_name FROM faculty f LEFT JOIN col
 
 $s = [];
 foreach (array_keys(setting_defaults()) as $k) $s[$k] = get_setting($conn, $k);
-$close_local = $s['registration_close'] ? date('Y-m-d\TH:i', strtotime($s['registration_close'])) : '';
+// เวลารับสมัครบันทึกไม่ผ่าน: แสดงค่าที่เพิ่งกรอกไว้ ไม่ต้องกรอกใหม่
+$keep_dt = !empty($time_error);
+$posted_dt = fn($name) => ['date' => $_POST[$name . '_date'] ?? '', 'time' => $_POST[$name . '_time'] ?? ''];
 ?>
 <!DOCTYPE html>
 <html lang="th">
@@ -160,15 +176,27 @@ $close_local = $s['registration_close'] ? date('Y-m-d\TH:i', strtotime($s['regis
                     <label class="form-label">สมัครได้สูงสุดกี่กีฬาต่อคน</label>
                     <input type="number" name="max_sports_per_student" min="1" value="<?= (int)$s['max_sports_per_student'] ?>" class="form-input">
                 </div>
+                <?php $state = registration_state($conn); ?>
+                <div class="mb-4" style="padding:10px 14px; border-radius:12px; background:<?= $state === 'open' ? '#ecfdf5' : ($state === 'not_started' ? '#fffbeb' : '#fef2f2') ?>;">
+                    สถานะตอนนี้: <b><?= $state === 'open' ? '🟢 เปิดรับสมัครอยู่' : ($state === 'not_started' ? '🟡 ยังไม่ถึงเวลาเปิดรับสมัคร' : '🔴 ปิดรับสมัคร') ?></b>
+                </div>
                 <div class="mb-4">
-                    <label class="form-label">วัน-เวลาปิดรับสมัคร</label>
-                    <input type="datetime-local" name="registration_close" value="<?= $close_local ?>" class="form-input">
+                    <label class="form-label">วัน-เวลาเปิดรับสมัคร (เว้นว่าง = เปิดทันที, เวลาแบบ 24 ชม.)</label>
+                    <?= datetime24_input('registration_start', $s['registration_start'], $keep_dt ? $posted_dt('registration_start') : null) ?>
+                </div>
+                <div class="mb-4">
+                    <label class="form-label">วัน-เวลาปิดรับสมัคร (เวลาแบบ 24 ชม.)</label>
+                    <?= datetime24_input('registration_close', $s['registration_close'], $keep_dt ? $posted_dt('registration_close') : null) ?>
                 </div>
                 <div class="mb-4">
                     <label style="cursor:pointer; font-weight:600;">
                         <input type="checkbox" name="registration_open" value="1" <?= $s['registration_open'] === '1' ? 'checked' : '' ?>>
                         เปิดรับสมัคร (ติ๊กออกเพื่อปิดรับสมัครทันที)
                     </label>
+                </div>
+                <div class="mb-4">
+                    <label class="form-label">ออกจากระบบ Admin อัตโนมัติเมื่อไม่ได้ใช้งาน (นาที, 5–1440)</label>
+                    <input type="number" name="admin_session_timeout" min="5" max="1440" value="<?= (int)$s['admin_session_timeout'] ?>" class="form-input">
                 </div>
                 <div class="mb-4">
                     <label class="form-label">ไซส์เสื้อ (คั่นด้วยจุลภาค)</label>

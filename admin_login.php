@@ -7,8 +7,7 @@ session_set_cookie_params(['httponly' => true, 'samesite' => 'Lax']);
 session_start();
 
 if (isset($_GET['logout'])) {
-    $_SESSION = [];
-    session_destroy();
+    admin_session_destroy();
     header('Location: admin_login.php');
     exit;
 }
@@ -19,9 +18,16 @@ if (str_starts_with($next, '//') || !preg_match('#^/?[A-Za-z0-9_\-/.]+\.php(\?[^
     $next = 'homeadmin.php';
 }
 
-if (!empty($_SESSION['is_admin']) && !empty($_SESSION['admin_id'])) {
-    header('Location: ' . $next);
-    exit;
+// ล็อกอินค้างอยู่และยังไม่หมดเวลา -> ไปหน้า Admin เลย, ถ้าหมดเวลาแล้วล้าง session ทิ้ง
+if (!empty($_SESSION['is_admin'])) {
+    $timeout = max(5, (int)get_setting($conn, 'admin_session_timeout', '30')) * 60;
+    if (!empty($_SESSION['admin_id']) && (time() - (int)($_SESSION['last_activity'] ?? 0)) <= $timeout) {
+        header('Location: ' . $next);
+        exit;
+    }
+    admin_session_destroy();
+    session_id(session_create_id());
+    session_start();
 }
 
 if (empty($_SESSION['csrf'])) $_SESSION['csrf'] = bin2hex(random_bytes(32));
@@ -63,6 +69,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $_SESSION['is_admin'] = true;
             $_SESSION['admin_id'] = (int)$admin['id'];
             $_SESSION['admin_username'] = $admin['username'];
+            $_SESSION['last_activity'] = time();
+            $_SESSION['csrf'] = bin2hex(random_bytes(32)); // token ใหม่หลังล็อกอิน ไม่ใช้ต่อจากก่อนล็อกอิน
             header('Location: ' . $next);
             exit;
         }

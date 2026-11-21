@@ -8,7 +8,9 @@ function setting_defaults() {
     return [
         'max_sports_per_student' => '2',
         'registration_open'      => '1',
+        'registration_start'     => '',   // ว่าง = เปิดรับสมัครทันที
         'registration_close'     => '2026-02-15 23:59:59',
+        'admin_session_timeout'  => '30', // นาที: ไม่ใช้งานนานเกินนี้ต้องล็อกอินใหม่
         'shirt_sizes'            => 'XS,S,M,L,XL,2XL,3XL,4XL,5XL',
         'allowed_image_ext'      => 'jpg,jpeg,png',
         'event_name'             => 'หูกวางเกมส์ 2026',
@@ -138,6 +140,62 @@ function index_exists(mysqli $conn, $table, $index) {
     return $r instanceof mysqli_result && $r->num_rows > 0;
 }
 
+/* ===== เวลาแบบ 24 ชั่วโมง (00:00–23:59) =====
+ * ไม่ใช้ <input type="time"> / datetime-local เพราะเบราว์เซอร์จะแสดง AM/PM ตามภาษาเครื่อง */
+
+/* แปลง "9:30", "09.30", "0930" -> "09:30" ; ไม่ถูกต้องคืน null */
+function normalize_time24($s) {
+    $s = trim((string)$s);
+    if (!preg_match('/^([01]?\d|2[0-3])[:.]?([0-5]\d)$/', $s, $m)) return null;
+    return sprintf('%02d:%s', (int)$m[1], $m[2]);
+}
+
+/* ช่องกรอกเวลา 24 ชม. */
+function time24_input($name, $value = '', $required = false, $extra = '') {
+    $v = $value !== '' && $value !== null ? date('H:i', strtotime($value)) : '';
+    return '<input type="text" name="' . htmlspecialchars($name) . '" value="' . $v . '"'
+        . ' placeholder="HH:MM (เช่น 16:30)" inputmode="numeric" maxlength="5" autocomplete="off"'
+        . ' pattern="([01]?[0-9]|2[0-3])[:.]?[0-5][0-9]" title="เวลาแบบ 24 ชั่วโมง 00:00 – 23:59"'
+        . ' class="form-input time24"' . ($required ? ' required' : '') . ($extra ? ' ' . $extra : '') . '>';
+}
+
+/* ช่องกรอกวันที่ + เวลา 24 ชม. (ส่งเป็น {name}_date และ {name}_time) */
+function datetime24_input($name, $value = '', $raw = null) {
+    $ts = $value ? strtotime($value) : 0;
+    $d = $raw !== null ? $raw['date'] : ($ts ? date('Y-m-d', $ts) : '');
+    if ($raw !== null) {
+        $t = normalize_time24($raw['time']) ?? '';
+        $time_html = str_replace('value=""', 'value="' . htmlspecialchars($t) . '"', time24_input($name . '_time', ''));
+    } else {
+        $time_html = time24_input($name . '_time', $ts ? date('H:i', $ts) : '');
+    }
+    return '<div style="display:flex; gap:8px; flex-wrap:wrap;">'
+        . '<input type="date" name="' . htmlspecialchars($name) . '_date" value="' . htmlspecialchars($d) . '" class="form-input" style="flex:1; min-width:150px;">'
+        . '<div style="width:140px;">' . $time_html . '</div>'
+        . '</div>';
+}
+
+/* อ่านค่าจาก datetime24_input -> "Y-m-d H:i:00" ; ว่างทั้งคู่คืน '' ; ไม่ถูกต้องคืน null */
+function read_datetime24($name) {
+    $d = trim($_POST[$name . '_date'] ?? '');
+    $t = trim($_POST[$name . '_time'] ?? '');
+    if ($d === '' && $t === '') return '';
+    $t = $t === '' ? '00:00' : normalize_time24($t);
+    if ($t === null || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $d)) return null;
+    return "$d $t:00";
+}
+
+/* ล้าง session + ลบ cookie ของ session ออกจากเบราว์เซอร์ (ใช้ตอน logout / หมดเวลา) */
+function admin_session_destroy() {
+    $_SESSION = [];
+    if (ini_get('session.use_cookies')) {
+        $p = session_get_cookie_params();
+        setcookie(session_name(), '', ['expires' => time() - 42000, 'path' => $p['path'], 'domain' => $p['domain'],
+            'secure' => $p['secure'], 'httponly' => $p['httponly'], 'samesite' => $p['samesite'] ?? 'Lax']);
+    }
+    session_destroy();
+}
+
 /* จำนวนบัญชี Admin ทั้งหมด (0 = ยังไม่เคยตั้งค่า ต้องสร้างบัญชีแรก) */
 function admin_count(mysqli $conn) {
     $r = $conn->query("SELECT COUNT(*) c FROM sport_admins");
@@ -167,11 +225,18 @@ function setting_list(mysqli $conn, $key) {
     return array_values(array_filter($items, fn($x) => $x !== ''));
 }
 
-/* ปิดรับสมัครหรือยัง (ปิดด้วยสวิตช์ หรือเลยเวลาปิด) */
-function registration_is_open(mysqli $conn) {
-    if (get_setting($conn, 'registration_open') !== '1') return false;
+/* สถานะรับสมัคร: 'closed' (ปิดด้วยสวิตช์ หรือเลยเวลาปิด), 'not_started' (ยังไม่ถึงเวลาเปิด), 'open' */
+function registration_state(mysqli $conn) {
+    if (get_setting($conn, 'registration_open') !== '1') return 'closed';
+    $start = strtotime(get_setting($conn, 'registration_start'));
+    if ($start && time() < $start) return 'not_started';
     $close = strtotime(get_setting($conn, 'registration_close'));
-    return !$close || time() <= $close;
+    if ($close && time() > $close) return 'closed';
+    return 'open';
+}
+
+function registration_is_open(mysqli $conn) {
+    return registration_state($conn) === 'open';
 }
 
 /* สีสำหรับแสดงผลจากชื่อสีทีม */

@@ -8,7 +8,9 @@ $max_sports   = max(1, (int)get_setting($conn,'max_sports_per_student'));
 $shirt_sizes  = setting_list($conn,'shirt_sizes');
 $allowed_ext  = array_map('strtolower', setting_list($conn,'allowed_image_ext'));
 $reg_close    = get_setting($conn,'registration_close');
-$reg_open     = registration_is_open($conn);
+$reg_state    = registration_state($conn);
+$reg_open     = $reg_state === 'open';
+$reg_start    = get_setting($conn,'registration_start');
 $event_name   = get_setting($conn,'event_name');
 $event_dates  = get_setting($conn,'event_dates');
 
@@ -55,6 +57,7 @@ if($_SERVER['REQUEST_METHOD']=="POST"){
     $color      = (int)($_POST['color_id'] ?? 0);
     $size       = $_POST['shirt_size'] ?? '';
 
+    if($reg_state === 'not_started'){ $msg="❌ ยังไม่เปิดรับสมัคร (เปิด ".date('d/m/Y H:i', strtotime($reg_start))." น.)"; goto end_post; }
     if(!$reg_open){ $msg="❌ ปิดรับสมัครแล้ว"; goto end_post; }
     if($color===0 || $faculty===0){ $msg="❌ กรุณาเลือกสีและคณะ"; goto end_post; }
     if(!in_array($size, $shirt_sizes, true)){ $msg="❌ กรุณาเลือกไซส์เสื้อ"; goto end_post; }
@@ -374,24 +377,43 @@ end_post:
     function closeImage() { document.getElementById("lightbox").style.display = "none"; }
     
     // Countdown
-    const registrationOpen = <?= $reg_open ? 'true' : 'false' ?>;
-    const closeTime = registrationOpen ? new Date(<?= json_encode(str_replace(' ', 'T', $reg_close)) ?>).getTime() : 0;
+    const regState = <?= json_encode($reg_state) ?>;
+    const toTime = (v) => v ? new Date(String(v).replace(' ', 'T')).getTime() : 0;
+    const startTime = toTime(<?= json_encode($reg_start) ?>);
+    const closeTime = toTime(<?= json_encode($reg_close) ?>);
     const text = document.getElementById("countdown-text");
     const reg = document.getElementById("register-section");
-    
-    setInterval(() => {
-        const d = registrationOpen ? closeTime - new Date().getTime() : 0;
-        if(d <= 0) {
-            text.innerHTML = "❌ หมดเวลาลงทะเบียนแล้ว/Registration closed";
-            reg.style.display = "none";
-            return;
-        }
+    const fmt = (d) => {
         const day = Math.floor(d/(1000*60*60*24));
         const h = Math.floor(d%(1000*60*60*24)/(1000*60*60));
         const m = Math.floor(d%(1000*60*60)/(1000*60));
         const s = Math.floor(d%(1000*60)/1000);
-        text.innerHTML = `⏰ ปิดรับสมัครในอีก ${day} วัน ${h} ชม. ${m} นาที ${s} วินาที`;
-    }, 1000);
+        return `${day} วัน ${h} ชม. ${m} นาที ${s} วินาที`;
+    };
+
+    function tick() {
+        const now = new Date().getTime();
+        if (regState === 'closed' || (closeTime && now > closeTime)) {
+            text.innerHTML = "❌ หมดเวลาลงทะเบียนแล้ว/Registration closed";
+            reg.style.display = "none";
+            return;
+        }
+        if (startTime && now < startTime) {
+            text.innerHTML = `🕒 เปิดรับสมัครในอีก ${fmt(startTime - now)}/Registration opens soon`;
+            reg.style.display = "none";
+            return;
+        }
+        if (regState === 'not_started') {
+            // ถึงเวลาเปิดแล้ว โหลดหน้าใหม่ให้ฟอร์มขึ้น (หน่วง 3 วิ เผื่อนาฬิกาเครื่องเร็วกว่าเซิร์ฟเวอร์)
+            text.innerHTML = "🕒 กำลังเปิดรับสมัคร...";
+            if (!window.__reloading) { window.__reloading = true; setTimeout(() => location.reload(), 3000); }
+            return;
+        }
+        reg.style.display = "";
+        text.innerHTML = closeTime ? `⏰ ปิดรับสมัครในอีก ${fmt(closeTime - now)}` : "✅ เปิดรับสมัครอยู่";
+    }
+    tick();
+    setInterval(tick, 1000);
     
     // Form Confirm
     document.getElementById("registerForm").addEventListener("submit", function(e) {

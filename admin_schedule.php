@@ -28,14 +28,15 @@ elseif ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $sport_name = $_POST['sport_name'];
     $category = $_POST['category'];
     $round_name = $_POST['round_name'];
-    $start_time = $_POST['start_time'];
+    $start_time = normalize_time24($_POST['start_time'] ?? '');
     $team1_id = $_POST['team1_id'];
     $team2_id = $_POST['team2_id'];
     $venue = $_POST['venue'];
     $result = $_POST['result'];
     $note = $_POST['note'];
 
-    if ($team1_id == $team2_id) { $error = "❌ ทีมต้องไม่ซ้ำกัน"; }
+    if ($start_time === null) { $error = "❌ เวลาไม่ถูกต้อง ใช้แบบ 24 ชั่วโมง เช่น 16:30 (00:00 – 23:59)"; }
+    elseif ($team1_id == $team2_id) { $error = "❌ ทีมต้องไม่ซ้ำกัน"; }
 
     $stmt = $conn->prepare("SELECT sport_id FROM sport_type WHERE sport_name=? AND category=? LIMIT 1");
     $stmt->bind_param("ss", $sport_name, $category);
@@ -140,8 +141,8 @@ $is_edit = !empty($form['match_id']);
                         <input type="number" name="match_no" required value="<?= e($form['match_no'] ?? '') ?>" class="form-input" style="padding: 12px;">
                     </div>
                     <div>
-                        <label class="form-label">เวลา</label>
-                        <input type="time" name="start_time" required value="<?= !empty($form['start_time']) ? date('H:i',strtotime($form['start_time'])) : '' ?>" class="form-input" style="padding: 12px;">
+                        <label class="form-label">เวลา (24 ชม.)</label>
+                        <?php $tv = $form['start_time'] ?? ''; echo time24_input('start_time', normalize_time24($tv) ?? (preg_match('/^\d{2}:\d{2}:\d{2}$/', (string)$tv) ? $tv : ''), true, 'style="padding: 12px;"'); ?>
                     </div>
                     <div>
                         <label class="form-label">รอบ</label>
@@ -243,7 +244,7 @@ $is_edit = !empty($form['match_id']);
                             <span style="display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: <?= team_color_hex($m['team2_name'] ?? '') ?>; margin-right: 6px;"></span>
                             <?= e($m['team2_name']) ?>
                         </td>
-                        <td style="text-align: center; font-weight: 600;"><?= date('H.i', strtotime($m['start_time'])) ?></td>
+                        <td style="text-align: center; font-weight: 600;"><?= date('H:i', strtotime($m['start_time'])) ?></td>
                         <td><?= e($m['venue']) ?></td>
                         <td style="text-align: center;">
                             <a href="?action=edit&match_id=<?= $m['match_id'] ?>#editForm" style="color: #f59e0b; font-weight: 700; text-decoration: none; margin-right: 8px;">✏️</a>

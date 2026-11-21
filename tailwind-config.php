@@ -493,6 +493,14 @@
         document.body.appendChild(bar);
     }
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+
+    // ช่องเวลา 24 ชม.: พิมพ์ 930 / 9.30 / 1630 แล้วจัดให้เป็น 09:30 / 16:30 อัตโนมัติ
+    document.addEventListener('blur', function (e) {
+        var el = e.target;
+        if (!el.classList || !el.classList.contains('time24')) return;
+        var m = el.value.trim().match(/^([01]?\d|2[0-3])[:.]?([0-5]\d)$/);
+        if (m) el.value = ('0' + parseInt(m[1], 10)).slice(-2) + ':' + m[2];
+    }, true);
 })();
 </script>
 <style>

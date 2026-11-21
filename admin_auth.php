@@ -36,9 +36,18 @@ function admin_auth_fail($code, $message, $redirect = null) {
     die('❌ ' . $message);
 }
 
+/* ไม่ได้ใช้งานนานเกินเวลาที่ตั้งไว้ -> ล้าง session ทั้งหมด ต้องล็อกอินใหม่ */
+$timeout = max(5, (int)get_setting($conn, 'admin_session_timeout', '30')) * 60;
+if (!empty($_SESSION['is_admin']) && (time() - (int)($_SESSION['last_activity'] ?? 0)) > $timeout) {
+    admin_session_destroy();
+    session_id(session_create_id());
+    session_start();
+}
+
 /* ล็อกอินแล้ว และบัญชียังไม่ถูกลบ */
 $admin_ok = false;
 if (!empty($_SESSION['is_admin']) && !empty($_SESSION['admin_id'])) {
+    $_SESSION['last_activity'] = time();
     $stmt = $conn->prepare("SELECT username FROM sport_admins WHERE id=?");
     $stmt->bind_param("i", $_SESSION['admin_id']);
     $stmt->execute();
